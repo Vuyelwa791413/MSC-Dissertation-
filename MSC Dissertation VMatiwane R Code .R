@@ -1,5 +1,18 @@
 
-ModelData <- read_csv("Documents/WITS/Data/LoanDefault_LTFS_AV/train_LTFS.csv")
+##Run Libraries First
+
+## This code includes:
+# All Data Preparations (Section 3.1.1)
+# All methodologoly Outputs (Section 4.2.1 , Section 4.3, Appendix B.1)
+# ALL Explainable AI Results (Section 4.2.2)
+# Outlier Graphs (Appendix A.2)
+# Search Algorithms (Appendix A.5)
+# Feature Importance (Section 4.1)
+#Adhoc Section covers: Feature Reduction Random Forest Appendix A.3 , Neural Network Compare Appendix B.2, Support Vector Machine Compare Appendix B.3, Challenger Model Appendix B.3
+################################################################################################################################################################################################
+
+
+ModelData <- read_csv("Documents/WITS/Data/LoanDefault_LTFS_AV/train_LTFS.csv") #Change to your path
 ModelData <- as.data.frame(ModelData)
 str(ModelData)
 
@@ -728,8 +741,6 @@ Final_TEST_Dataset <- subset(TestScaled, select = -c(UniqueID))
 Final_TRAINING_Dataset <- as.data.frame(Final_TRAINING_Dataset)
 Final_TEST_Dataset <- as.data.frame(Final_TEST_Dataset)
 
-str(Final_TRAINING_Dataset)
-str(Final_TEST_Dataset)
 
 Final_TRAINING_Dataset <- as.data.frame(Final_TRAINING_Dataset)
 Final_TEST_Dataset <- as.data.frame(Final_TEST_Dataset)
@@ -797,6 +808,7 @@ legend("bottomright", legend = paste("AUC =", round(auc_value, 3)), col = "blue"
 ###################################################################################################################################################################
 ###################################################################################################################################################################
 #Neural Network
+library(ANN2)
 
 TrainData <-Final_TRAINING_Dataset
 TestData <-Final_TEST_Dataset
@@ -940,6 +952,7 @@ legend("bottomright", legend = paste("AUC =", round(auc_value, 3)), col = "blue"
 #######################################################################################################
 ####### Descision Tree #######
 
+library(rpart)
 
 dt_model2 <- rpart(
   loan_default ~ ., 
@@ -1004,8 +1017,9 @@ rpart.plot(dt_pruned, type = 2, extra = 104)
 
 dt_model2$variable.importance
 
-#########################################################################
+##########################################################################################################################
 ######################### Random Forest #################################
+library(randomForest)
 
 set.seed(42)  
 
@@ -1305,5 +1319,948 @@ legend("bottomright", legend = paste("AUC =", round(auc_value, 3)), col = "blue"
 
 
 
+####################################################################################################################################################################################################
+####################################################################################################################################################################################################
+###################### Search Algorithms (Appendix A.5) ####################
+######################Search Algorithms (Appendix A.5) #####################
 
 
+############## GRID SEARCH for NEURAL NETWORK  ##############
+
+X_train <-as.data.frame(Final_TRAINING_Dataset[, -15])
+y_train <- as.numeric(as.character(Final_TRAINING_Dataset$loan_default))
+
+X_test <- as.data.frame(Final_TEST_Dataset[, -15])
+y_test <- as.numeric(as.character(Final_TEST_Dataset$loan_default))
+
+
+set.seed(42)
+
+
+param_grid <- expand.grid(
+  learn.rates = c(0.01, 0.001, 0.1),
+  L2 = c(0,0.001,0.01, 0.1),
+  n.epochs = c(100, 200),
+  batch.size = c(10,32,150,300),
+  hidden = I(list(c(3), c(5), c(8), c(12),c(16),c(4,6), c(3, 3), c(2, 3), c(2, 2), c(1, 2), c(2, 4),c(5,5)))
+)
+
+# === Store results ===
+results <- data.frame()
+
+# === Grid Search ===
+for (i in 1:nrow(param_grid)) {
+  cat("Training model", i, "of", nrow(param_grid), "\n")
+  
+  set.seed(42)
+  # Train model
+  model <- neuralnetwork(
+    X = X_train,
+    y = y_train,
+    hidden.layers = param_grid$hidden[[i]],
+    learn.rates = param_grid$learn.rates[i],
+    L2 = param_grid$L2[i],
+    optim.type = "adam",
+    loss.type = "log",
+    activ.functions = "relu",
+    regression = FALSE,
+    n.epochs = param_grid$n.epochs[i],
+    batch.size = param_grid$batch.size[i],
+    val.prop = 0,
+    verbose = FALSE,
+    drop.last = FALSE,
+    random.seed = 42
+  )
+  
+  # Predict on test data
+  pred_probs_list <- predict(model, X_test, type = "raw")
+  preds <- as.numeric(pred_probs_list$prediction)
+  pred_class <- ifelse(preds > 0.5, 1, 0)
+  
+  # Confusion Matrix
+  conf_mat <- caret::confusionMatrix(
+    factor(pred_class, levels = c(0, 1)),
+    factor(y_test, levels = c(0, 1)),
+    positive = "1"
+  )
+  
+  # Extract metrics
+  acc <- conf_mat$overall["Accuracy"]
+  sens <- conf_mat$byClass["Sensitivity"]
+  spec <- conf_mat$byClass["Specificity"]
+  
+  # Store results
+  results <- rbind(results, data.frame(
+    learn.rate = param_grid$learn.rates[i],
+    L2 = param_grid$L2[i],
+    n.epochs = param_grid$n.epochs[i],
+    batch.size = param_grid$batch.size[i],
+    hidden = paste(param_grid$hidden[[i]], collapse = "-"),
+    accuracy = round(acc, 4),
+    sensitivity = round(sens, 4),
+    specificity = round(spec, 4)
+  ))
+}
+
+# === Show sorted results by Accuracy ===
+results1 <- results[order(-results$accuracy), ]
+print(results1)
+view(results1)
+write_xlsx(results1, "Documents/WITS/Data/LoanDefault_LTFS_AV/Neural_Results1.xlsx")
+
+################################################################################################################################################################################################
+############## GRID SEARCH for SVM  ##############
+
+
+library(kernlab)
+
+# Exclude response variable
+X <- Final_TRAINING_Dataset[, setdiff(names(Final_TRAINING_Dataset), "loan_default")]
+
+# Identify zero-variance columns
+zero_var_cols <- names(X)[apply(X, 2, function(col) var(as.numeric(col), na.rm = TRUE) == 0)]
+
+# Drop zero-variance columns
+X_clean <- X[, setdiff(names(X), zero_var_cols)]
+
+# Combine back with response
+Train_clean <- cbind(X_clean, loan_default = Final_TRAINING_Dataset$loan_default)
+
+
+
+
+# Train a radial (RBF) SVM
+
+#FINAL Model 
+svm_rbf_01 <- ksvm(loan_default ~ ., 
+                   data = Train_clean,
+                   type = "C-svc",
+                   kernel = "rbfdot",   # radial basis kernel
+                   C = 1,
+                   kpar = "automatic",  # gamma parameter
+                   prob.model = TRUE)
+
+svm_rbf_001 <- ksvm(loan_default ~ ., 
+                   data = Train_clean,
+                   type = "C-svc",
+                   kernel = "rbfdot",   # radial basis kernel
+                   C = 0.1,
+                   kpar = "automatic",  # gamma parameter
+                   prob.model = TRUE)
+
+svm_rbf_05 <- ksvm(loan_default ~ ., 
+                   data = Train_clean,
+                   type = "C-svc",
+                   kernel = "rbfdot",   # radial basis kernel
+                   C = 0.5,
+                   kpar = "automatic",  # gamma parameter
+                   prob.model = TRUE)
+
+svm_rbf_07 <- ksvm(loan_default ~ ., 
+                   data = Train_clean,
+                   type = "C-svc",
+                   kernel = "rbfdot",   # radial basis kernel
+                   C = 0.7,
+                   kpar = "automatic",  # gamma parameter
+                   prob.model = TRUE)
+
+
+
+# Predict class labels
+pred_rbf01 <- predict(svm_rbf_01, Final_TEST_Dataset, type = "response")
+pred_rbf001 <- predict(svm_rbf_001, Final_TEST_Dataset, type = "response")
+pred_rbf05 <- predict(svm_rbf_05, Final_TEST_Dataset, type = "response")
+pred_rbf07 <- predict(svm_rbf_07, Final_TEST_Dataset, type = "response")
+
+pred_rbf01 <- as.factor(pred_rbf01)
+pred_rbf001 <- as.factor(pred_rbf001)
+pred_rbf05 <- as.factor(pred_rbf05)
+pred_rbf07 <- as.factor(pred_rbf07)
+
+# Predict probabilities
+prob_rbf01 <- predict(svm_rbf_01, Final_TEST_Dataset, type = "probabilities")[,2]
+prob_rbf001 <- predict(svm_rbf_001, Final_TEST_Dataset, type = "probabilities")[,2]
+prob_rbf05 <- predict(svm_rbf_05, Final_TEST_Dataset, type = "probabilities")[,2]
+prob_rbf07 <- predict(svm_rbf_07, Final_TEST_Dataset, type = "probabilities")[,2]
+
+
+
+actual_Label_svm <- Final_TEST_Dataset$loan_default
+actual_Label_svm <- as.factor(actual_Label_svm)
+
+
+### Confusion matrix
+
+conf_matrix_rbf01 <- caret::confusionMatrix(pred_rbf01, actual_Label_svm, positive = "1")
+conf_matrix_rbf01
+
+conf_matrix_rbf001 <- caret::confusionMatrix(pred_rbf001, actual_Label_svm, positive = "1")
+conf_matrix_rbf001
+
+conf_matrix_rbf05 <- caret::confusionMatrix(pred_rbf05, actual_Label_svm, positive = "1")
+conf_matrix_rbf05
+
+conf_matrix_rbf07 <- caret::confusionMatrix(pred_rbf07, actual_Label_svm, positive = "1")
+conf_matrix_rbf07
+
+
+
+f10001       <- conf_matrix_rbf03$byClass['F1']
+f105       <- conf_matrix_rbf05$byClass['F1']
+f107       <- conf_matrix_rbf07$byClass['F1']
+
+f10001
+f105
+f107
+
+
+roc_obj001 <- roc(actual_Label_svm, prob_rbf001)
+auc_value001 <- pROC::auc(roc_obj001)
+pROC::auc(roc_obj001)
+
+roc_obj05 <- roc(actual_Label_svm, prob_rbf05)
+auc_value05 <- pROC::auc(roc_obj05)
+pROC::auc(roc_obj05)
+
+
+roc_obj07 <- roc(actual_Label_svm, prob_rbf07)
+auc_value07 <- pROC::auc(roc_obj07)
+pROC::auc(roc_obj07)
+
+
+####################################################################################################################################################################################################
+####################################################################################################################################################################################################
+###################### Explainable AI ############################
+###################### Explainable AI ############################
+
+
+
+############################## LIME ##########################
+
+
+###Decision Tree 
+
+# Remove target variable
+
+train_features <- Final_TRAINING_Dataset %>% 
+  select(-loan_default)
+
+# Pick first 5 observations from training data to explain
+test_observations <- Final_TRAINING_Dataset[1:5, ] %>% 
+  select(-loan_default)
+
+# Create a LIME explainer
+explainer_dt <- lime::lime(train_features, dt_model2, bin_continuous = TRUE)
+
+
+#This tells Lime that it is classification:
+model_type.rpart <- function(x, ...) {
+  # Check if your model is classification or regression
+  if (x$method == "class") {
+    return("classification")
+  } else {
+    return("regression")
+  }
+}
+
+
+# Define how to get predictions for LIME
+predict_model.rpart <- function(x, newdata, type = "raw", ...) {
+  # For classification, return probabilities
+  pred <- predict(x, newdata = newdata, type = "prob")
+  return(as.data.frame(pred))
+}
+
+
+
+# Generate explanations
+set.seed(123)
+lime_explanation <- lime::explain(
+  x = test_observations,
+  explainer = explainer_dt,
+  n_features = 5,  # Show top 5 important features
+  n_labels = 1 # Only explain the predicted class
+)
+
+
+view(lime_explanation)
+
+
+plot_features(lime_explanation)
+
+
+###RANDOM FOREST
+
+
+
+# Training features only
+train_features <- Final_TRAINING_Dataset %>% 
+  select(-loan_default)
+
+test_observations <- Final_TRAINING_Dataset[1:5, ] %>%
+  select(-loan_default)
+
+# Generate explanations
+
+explainer_rf <- lime::lime(
+  x = train_features,
+  model = rf_model,
+  bin_continuous = TRUE   # OK for numeric credit variables
+)
+
+
+# Tell LIME this is a classification model
+model_type.randomForest <- function(x, ...) {
+  "classification"
+}
+
+# Tell LIME how to get probabilities
+predict_model.randomForest <- function(x, newdata, ...) {
+  preds <- predict(x, newdata = newdata, type = "prob")
+  as.data.frame(preds)
+}
+
+set.seed(123)
+lime_explanationrf <- lime::explain(
+  x = test_observations,
+  explainer = explainer_rf,
+  n_features = 5,
+  n_labels = 1
+)
+
+view(lime_explanationrf)
+
+
+plot_features(lime_explanationrf)
+
+
+
+
+##############Xgboost
+
+
+train_features <- Final_TRAINING_Dataset %>%
+  select(-loan_default)
+
+
+explainer_xgb <- lime(
+  x = train_features,
+  model = xgb_model1,
+  bin_continuous = TRUE
+)
+
+
+# Tell LIME this is classification
+model_type.xgb.Booster <- function(x, ...) {
+  "classification"
+}
+
+# Tell LIME how to get probabilities
+predict_model.xgb.Booster <- function(x, newdata, ...) {
+  preds <- predict(x, as.matrix(newdata))
+  data.frame(`0` = 1 - preds, `1` = preds)
+}
+
+
+test_observations <- Final_TRAINING_Dataset[1:5, ] %>%
+  select(-loan_default)
+
+set.seed(123)
+lime_explanation_xgb <- lime::explain(
+  x = test_observations,
+  explainer = explainer_xgb,
+  n_features = 5,
+  n_labels = 1
+)
+
+view(lime_explanation_xgb)
+plot_features(lime_explanation_xgb)
+
+#################################################################
+###SVM
+
+library(lime)
+
+# Exclude response variable
+X <- Final_TRAINING_Dataset[, setdiff(names(Final_TRAINING_Dataset), "loan_default")]
+
+# Identify zero-variance columns
+zero_var_cols <- names(X)[apply(X, 2, function(col) var(as.numeric(col), na.rm = TRUE) == 0)]
+
+# Drop zero-variance columns
+X_clean <- X[, setdiff(names(X), zero_var_cols)]
+
+# Combine back with response
+Train_clean <- cbind(X_clean, loan_default = Final_TRAINING_Dataset$loan_default)
+
+
+
+
+# Training data without target
+X_train <- Train_clean[, !names(Train_clean) %in% "loan_default"]
+
+# Create LIME explainer
+explainer_svm <- lime(
+  x = X_train,
+  model = svm_rbf,
+  bin_continuous = TRUE
+)
+
+
+
+# Tell LIME this is a classification model
+model_type.ksvm <- function(x, ...) {
+  "classification"
+}
+
+# Tell LIME how to get probabilities
+predict_model.ksvm <- function(x, newdata, ...) {
+  
+  preds <- predict(
+    x,
+    as.matrix(newdata),
+    type = "probabilities"
+  )
+  
+  as.data.frame(preds)
+}
+
+
+test_observations <- X_train[1:5, ]
+
+
+set.seed(123)
+# Explain a single observation (e.g. row 1)
+lime_explanation_svm <- lime::explain(
+  x = test_observations,
+  explainer = explainer_svm,
+  n_features = 5,
+  n_labels = 1
+)
+
+# Plot
+plot_features(lime_explanation_svm)
+
+
+
+#################################################################
+### NN
+
+train_features <- Final_TRAINING_Dataset %>%
+  select(-loan_default)
+
+predict(neuralnetwork, train_features[1:5, ])
+
+
+nn_wrapper <- list(model = neuralnetwork)
+class(nn_wrapper) <- "ANN_lime"
+
+model_type.ANN_lime <- function(x, ...) "classification"
+
+predict_model.ANN_lime <- function(model, newdata, type, ...) {
+  
+  pred_obj <- predict(model$model, newdata)
+  
+  # Extract probabilities
+  probs <- pred_obj$probabilities
+  
+  # Return as data.frame (required by LIME)
+  data.frame(
+    default_0 = probs[, "class_0"],
+    default_1 = probs[, "class_1"]
+  )
+}
+
+
+explainer_nn <- lime(
+  x = train_features,
+  model = nn_wrapper,
+  bin_continuous = TRUE
+)
+
+
+set.seed(123)
+
+lime_explanation_NN <- lime::explain(
+  x = train_features[1:5, ],
+  explainer = explainer_nn,
+  n_features = 5,
+  n_labels = 1
+)
+
+
+plot_features(lime_explanation_NN)
+
+
+
+
+
+##############################################################
+############################## SHAP ##########################
+###############################################################
+
+###Decision Tree 
+
+X_train <- Final_TRAINING_Dataset[, 
+                                  !names(Final_TRAINING_Dataset) %in% "loan_default"
+                                  ]
+
+y_train <- Final_TRAINING_Dataset$loan_default
+
+pred_fun <- function(model, newdata) {
+  predict(model, newdata, type = "prob")[, "1"]
+}
+
+predictor_dt <- iml::Predictor$new(
+  model = dt_model2,
+  data = X_train,
+  y = y_train,
+  predict.function = pred_fun,
+  class = "classification"
+)
+
+x_interest <- X_train[1, ]
+
+## LOCAL SHAPLEY
+shap_dt <- Shapley$new(
+  predictor = predictor_dt,
+  x.interest = x_interest
+)
+
+shap_dt$plot()
+shap_dt
+
+
+## GLOBAL SHAPLEY - takes about 5mins to run 
+
+shap_values <- lapply(1:100, function(i) {
+  Shapley$new(
+    predictor = predictor_dt,
+    x.interest = X_train[i, ]
+  )$results
+})
+
+shapg_df <- do.call(rbind, shap_values)
+
+#global importance
+
+library(dplyr)
+
+global_shap <- shapg_df %>%
+  group_by(feature) %>%
+  summarise(mean_abs_shap = mean(abs(phi)))
+
+global_shap %>%
+  arrange(desc(mean_abs_shap))
+
+
+library(ggplot2)
+
+ggplot(global_shap, aes(
+  x = reorder(feature, mean_abs_shap),
+  y = mean_abs_shap
+)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Global Feature Importance (Mean |SHAP|)",
+    x = "Feature",
+    y = "Mean Absolute SHAP Value"
+  ) +
+  theme_minimal()
+
+
+
+
+
+##########################################################
+###Random Forest 
+
+
+X_train <- Final_TRAINING_Dataset[
+  , !names(Final_TRAINING_Dataset) %in% "loan_default"
+  ]
+
+y_train <- Final_TRAINING_Dataset$loan_default
+
+
+pred_fun <- function(model, newdata) {
+  predict(model, newdata, type = "prob")[, "1"]
+}
+
+
+
+predictor_rf <- iml::Predictor$new(
+  model = rf_model,
+  data = X_train,
+  y = y_train,
+  predict.function = pred_fun,
+  class = "classification"
+)
+
+x_interest <- X_train[1, ]
+
+#Local SHAP
+shap_rf <- Shapley$new(
+  predictor = predictor_rf,
+  x.interest = x_interest
+)
+
+shap_rf$plot()
+shap_rf
+
+
+#Global SHAP - takes long to run - 2 hours 
+
+shap_values <- lapply(1:100, function(i) {
+  Shapley$new(
+    predictor = predictor_rf,
+    x.interest = X_train[i, ]
+  )$results
+})
+
+shap_df <- do.call(rbind, shap_values)
+
+library(dplyr)
+
+global_shap_RF <- shap_df %>%
+  group_by(feature) %>%
+  summarise(mean_abs_shap = mean(abs(phi))) %>%
+  arrange(desc(mean_abs_shap))
+
+library(ggplot2)
+
+ggplot(global_shap_RF, aes(
+  x = reorder(feature, mean_abs_shap),
+  y = mean_abs_shap
+)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Global Feature Importance (Mean |SHAP|)",
+    x = "Feature",
+    y = "Mean Absolute SHAP Value"
+  ) +
+  theme_minimal()
+
+
+###XGBOOST
+
+X_train <- Final_TRAINING_Dataset[
+  , !names(Final_TRAINING_Dataset) %in% "loan_default"
+  ]
+
+y_train <- Final_TRAINING_Dataset$loan_default
+
+
+
+pred_fun_xgb <- function(model, newdata) {
+  newdata <- as.matrix(newdata)
+  predict(model, newdata)
+}
+
+library(iml)
+
+predictor_xgb <- Predictor$new(
+  model = xgb_model1,
+  data = X_train,
+  y = y_train,
+  predict.function = pred_fun_xgb,
+  class = "classification"
+)
+
+
+x_interest <- X_train[1, ]
+
+shap_xgb <- Shapley$new(
+  predictor = predictor_xgb,
+  x.interest = x_interest
+)
+
+shap_xgb$plot()
+shap_xgb$results
+
+
+#Global SHAP - 
+
+library(dplyr)
+
+set.seed(123)
+
+shap_values <- lapply(1:100, function(i) {
+  Shapley$new(
+    predictor = predictor_xgb,
+    x.interest = X_train[i, ]
+  )$results
+})
+
+shap_df <- bind_rows(shap_values)
+
+
+global_shap_XGB <- shap_df %>%
+  group_by(feature) %>%
+  summarise(mean_abs_shap = mean(abs(phi))) %>%
+  arrange(desc(mean_abs_shap))
+
+
+library(ggplot2)
+
+ggplot(global_shap_XGB, aes(
+  x = reorder(feature, mean_abs_shap),
+  y = mean_abs_shap
+)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Global Feature Importance (Mean |SHAP|) – XGBoost",
+    x = "Feature",
+    y = "Mean Absolute SHAP Value"
+  ) +
+  theme_minimal()
+
+#################################################################
+###SVM
+
+library(iml)
+library(kernlab)
+
+# Prediction wrapper (probability of default = class "1")
+predict_fun <- function(model, newdata) {
+  as.numeric(predict(model, newdata, type = "probabilities")[, "1"])
+}
+
+# Create Predictor object
+predictor_svm <- Predictor$new(
+  model = svm_rbf,
+  data = X_train,
+  y = Train_clean$loan_default,
+  predict.fun = predict_fun,
+  class = "classification"
+)
+
+
+shap_local <- Shapley$new(
+  predictor = predictor_svm,
+  x.interest = X_train[1, ],
+  sample.size = 100
+)
+
+plot(shap_local)
+
+
+#Global 
+
+library(dplyr)
+
+set.seed(123)
+
+# Sample rows (important for speed)
+idx <- sample(1:nrow(X_train), 100)
+
+shap_values <- lapply(idx, function(i) {
+  Shapley$new(
+    predictor = predictor_svm,
+    x.interest = X_train[i, ],
+    sample.size = 100
+  )$results
+})
+
+shap_df <- bind_rows(shap_values)
+
+global_shap_SVM <- shap_df %>%
+  group_by(feature) %>%
+  summarise(mean_abs_shap = mean(abs(phi))) %>%
+  arrange(desc(mean_abs_shap))
+
+
+
+
+library(ggplot2)
+
+ggplot(global_shap_SVM, aes(
+  x = reorder(feature, mean_abs_shap),
+  y = mean_abs_shap
+)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Global Feature Importance (Mean |SHAP|)",
+    x = "Feature",
+    y = "Mean Absolute SHAP Value"
+  ) +
+  theme_minimal()
+
+
+####################################################################################################################################################################################################
+####################################################################################################################################################################################################
+###################### Adhoc Section ############################
+###################### Adhoc Section ############################
+
+
+#Adhoc Section covers: Feature Reduction Random Forest Appendix A.3 , Neural Network Compare Appendix B.2, Support Vector Machine Compare Appendix B.3, Challenger Model Appendix B.3
+
+###################### Feature Reduction Random Forest Appendix A.3   #############################
+#Random Forest - Ranking was compared not actual values
+
+
+training_dataset_ <- subset(training_data_Cap, select = -c(UniqueID,branch_id,TOT.CURRENT.BALANCE,Current_pincode_ID,supplier_id,Employee_code_ID)) 
+str(training_dataset_)
+
+model_RF <- randomForest(loan_default ~ ., data=training_dataset_, importance=TRUE) # Can not handle categorical predictors with more than 53 categories - removing factors with more than 53 Categories 
+importance(model_RF)
+
+###################################### Neural Network Compare Appendix B.2  #################################################
+# Data Prep
+
+prop.table(table(Train_example2$loan_default))
+prop.table(table(Test_example2$loan_default))
+
+set.seed(42)
+splitIndex2 <- sample.split(Final_Train_Dataset$UniqueID, SplitRatio = 0.01)
+Train_example <- Final_Train_Dataset[splitIndex2, ]
+Train_example2 <- subset(Train_example, select = -c(UniqueID)) 
+
+
+splitIndex3 <- sample.split(TestScaled$UniqueID, SplitRatio = 0.01)
+Test_example <- TestScaled[splitIndex3, ]
+Test_example2 <- subset(Test_example, select = -c(UniqueID)) 
+
+Test_example2 <- as.data.frame(Test_example2)
+Train_example2 <- as.data.frame(Train_example2)
+
+
+##neuralnetwork
+set.seed(42)
+nnet_3 <- neuralnetwork(
+  X = Train_example2[,-15],
+  y = as.numeric(as.character(Train_example2$loan_default)),
+  hidden.layers = 3,
+  activ.functions = "sigmoid",
+  learn.rates = 0.01,
+  L2=0.01,
+  n.epochs = 100,        
+  batch.size = 1,
+  verbose = FALSE
+)
+
+##nnet
+set.seed(42)
+nn_3 <- nnet(loan_default ~ ., 
+             data = Train_example2, 
+             size = 3,
+             decay = 0.01, # Change to 0 when comparing to neuralnet
+             maxit = 100, # Change to 1e6 when comparing to neuralnet
+             trace = FALSE)
+
+
+##neuralnet
+set.seed(42)
+neuralnet_3 <- neuralnet(
+  formula = loan_default ~ ., 
+  data = Train_example2,
+  hidden = c(3),
+  learningrate = 0.01,
+  stepmax = 1e6,
+  linear.output = FALSE,
+  algorithm = "backprop")
+
+
+###################################### Support Vector Machine Compare Appendix B.3  #################################################
+
+# Data Prep
+set.seed(42)
+splitIndex2 <- sample.split(Final_Train_Dataset$UniqueID, SplitRatio = 0.10)
+Train_example <- Final_Train_Dataset[splitIndex2, ]
+Train_example3 <- subset(Train_example, select = -c(UniqueID)) 
+
+
+splitIndex3 <- sample.split(TestScaled$UniqueID, SplitRatio = 0.10)
+Test_example <- TestScaled[splitIndex3, ]
+Test_example3 <- subset(Test_example, select = -c(UniqueID)) 
+
+Test_example3 <- as.data.frame(Test_example3)
+Train_example3 <- as.data.frame(Train_example3)
+
+library(kernlab)
+
+# Exclude response variable
+X <- Train_example3[, setdiff(names(Train_example3), "loan_default")]
+
+# Identify zero-variance columns
+zero_var_cols <- names(X)[apply(X, 2, function(col) var(as.numeric(col), na.rm = TRUE) == 0)]
+
+# Drop zero-variance columns
+X_clean <- X[, setdiff(names(X), zero_var_cols)]
+
+# Combine back with response
+Train_clean <- cbind(X_clean, loan_default = Train_example3$loan_default)
+
+############################################################################################################3
+# Ksvm - Linear
+Ksvm_linear <- ksvm(loan_default ~ ., 		
+                    data = Train_clean, # manufacturer_id.156 has only one vale which got dropped		
+                    type = "C-svc",        # classification		
+                    kernel = "vanilladot", # linear kernel		
+                    C = 1,                 # cost parameter		
+                    tol = 1e-3,           # default 1e-4		
+                    prob.model = TRUE) 		
+
+# svm - Linear
+svm_Linear <- svm(loan_default ~ ., data = Train_example3, kernel = "linear")
+
+# Train - Linear
+Train_Linear <- caret::train(loan_default ~ ., data = Train_example3, method = "svmLinear", trControl = ctrl)
+
+
+# Ksvm - radial
+Ksvm_Radial <- ksvm(loan_default ~ ., 			
+                    data = Train_clean,			
+                    type = "C-svc",			
+                    kernel = "rbfdot",   # radial basis kernel			
+                    C = 1,			
+                    kpar = "automatic",  # gamma parameter			
+                    prob.model = TRUE)			
+
+# svm - radial
+svm_Radial <- svm(loan_default ~ ., data = Train_example3, kernel = "radial")
+
+# Train - radial
+Train_Radial <- caret::train(loan_default ~ ., data = Train_example3, method = "svmRadial", trControl = ctrl)
+
+
+################################## Challenger Model Appendix B.3 ##############################
+
+#The same data preparations are as the original,  applied to the different sampling methods.
+
+#####################################################################################
+### Re-sample 70% / 30% Split CODE
+
+ModelData <- read_csv("Documents/WITS/Data/LoanDefault_LTFS_AV/train_LTFS.csv")
+ModelData <- as.data.frame(ModelData)
+str(ModelData)
+
+
+# Set the seed for reproducibility
+set.seed(345)
+
+#1. Split the data into training (70%) and testing (30%) sets
+splitIndex <- sample.split(ModelData$UniqueID, SplitRatio = 0.7)
+training_data <- ModelData[splitIndex, ]
+testing_data <- ModelData[!splitIndex, ]
+
+
+#####################################################################################
+### 80% / 20% Split CODE
+
+
+ModelData <- read_csv("Documents/WITS/Data/LoanDefault_LTFS_AV/train_LTFS.csv")
+ModelData <- as.data.frame(ModelData)
+
+
+# Set the seed for reproducibility
+set.seed(123)
+
+#1. Split the data into training (80%) and testing (20%) sets
+splitIndex <- sample.split(ModelData$UniqueID, SplitRatio = 0.8)
+training_data <- ModelData[splitIndex, ]
+testing_data <- ModelData[!splitIndex, ]
